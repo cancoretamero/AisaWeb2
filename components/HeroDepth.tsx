@@ -364,11 +364,9 @@ export default function HeroDepth({ fadeStart = 0.7, strength = 0.06, layers = 5
     };
   }, [mode]);
 
-  const description = 'Fotografía panorámica de montañas al atardecer con efecto de profundidad.';
-
   return (
     <section
-      aria-label={description}
+      aria-hidden="true"
       style={{
         position: 'relative',
         width: '100%',
@@ -382,7 +380,7 @@ export default function HeroDepth({ fadeStart = 0.7, strength = 0.06, layers = 5
       {mode === 'static' ? (
         <img
           src="/hero/montanas.jpg"
-          alt={description}
+          alt=""
           style={{
             width: '100%',
             height: '100%',
@@ -407,22 +405,6 @@ export default function HeroDepth({ fadeStart = 0.7, strength = 0.06, layers = 5
           }}
         />
       ) : null}
-      <span
-        style={{
-          position: 'absolute',
-          width: 1,
-          height: 1,
-          padding: 0,
-          margin: -1,
-          border: 0,
-          clip: 'rect(0 0 0 0)',
-          clipPath: 'inset(50%)',
-          overflow: 'hidden',
-          whiteSpace: 'nowrap'
-        }}
-      >
-        {description}
-      </span>
     </section>
   );
 }

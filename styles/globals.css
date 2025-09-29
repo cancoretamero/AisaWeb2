@@ -28,15 +28,8 @@ main {
   padding: 8rem 1.5rem;
   max-width: 720px;
   margin: 0 auto;
-  line-height: 1.6;
 }
 
-.section h2 {
-  font-size: clamp(2.5rem, 5vw, 3.75rem);
-  margin-bottom: 1.5rem;
-}
-
-.section p {
-  font-size: clamp(1.125rem, 2vw, 1.35rem);
-  opacity: 0.85;
+.section.spacer {
+  min-height: 60vh;
 }
