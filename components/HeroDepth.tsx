@@ -1,9 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import * as THREE from 'three';
-
-type DepthStatus = 'unknown' | 'available' | 'missing';
 
 type HeroDepthProps = {
   fadeStart?: number;
@@ -11,39 +8,21 @@ type HeroDepthProps = {
 };
 
 const clampFade = (value: number) => Math.min(Math.max(value, 0.65), 0.85);
-
-const shaders = {
-  vertex: /* glsl */ `
-    varying vec2 vUv;
-    void main() {
-      vUv = uv;
-      gl_Position = vec4(position, 1.0);
-    }
-  `,
-  fragment: /* glsl */ `
-    uniform sampler2D u_tex;
-    uniform sampler2D u_depth;
-    uniform vec2 u_mouse;
-    uniform vec2 u_res;
-    uniform float u_strength;
-
-    void main() {
-      vec2 uv = gl_FragCoord.xy / u_res;
-      float d = texture2D(u_depth, uv).r;
-      vec2 parallax = u_mouse * (d - 0.5) * u_strength;
-      vec4 color = texture2D(u_tex, uv + parallax);
-      gl_FragColor = color;
-    }
-  `
+type LayerConfig = {
+  id: string;
+  clipPath: string;
+  shift: number;
+  opacity: number;
 };
+
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
 export default function HeroDepth({ fadeStart = 0.7, strength = 0.06 }: HeroDepthProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const fallbackRef = useRef<HTMLDivElement | null>(null);
+  const layerRefs = useRef<(HTMLDivElement | null)[]>([]);
   const inputControllerRef = useRef<{ setTarget: (x: number, y: number) => void } | null>(null);
   const [reduceMotion, setReduceMotion] = useState(false);
-  const [depthStatus, setDepthStatus] = useState<DepthStatus>('unknown');
-  const [mode, setMode] = useState<'static' | 'three' | 'fallback'>('static');
+  const [mode, setMode] = useState<'static' | 'parallax'>('static');
 
   const fadeValue = useMemo(() => clampFade(fadeStart), [fadeStart]);
   const maskStyle = useMemo(
@@ -52,6 +31,33 @@ export default function HeroDepth({ fadeStart = 0.7, strength = 0.06 }: HeroDept
       WebkitMaskImage: `linear-gradient(to bottom, rgba(0,0,0,1) ${fadeValue * 100}%, rgba(0,0,0,0) 100%)`
     }),
     [fadeValue]
+  );
+
+  const layers = useMemo<LayerConfig[]>(
+    () => [
+      {
+        id: 'ridge-far',
+        clipPath:
+          'polygon(0% 36%, 10% 32%, 22% 40%, 34% 30%, 47% 42%, 59% 31%, 73% 44%, 86% 33%, 100% 39%, 100% 100%, 0% 100%)',
+        shift: 12,
+        opacity: 0.95
+      },
+      {
+        id: 'ridge-mid',
+        clipPath:
+          'polygon(0% 46%, 9% 52%, 18% 44%, 31% 58%, 44% 46%, 58% 60%, 72% 50%, 86% 64%, 100% 54%, 100% 100%, 0% 100%)',
+        shift: 22,
+        opacity: 0.98
+      },
+      {
+        id: 'ridge-near',
+        clipPath:
+          'polygon(0% 58%, 8% 66%, 20% 58%, 33% 74%, 48% 60%, 62% 76%, 78% 64%, 90% 80%, 100% 70%, 100% 100%, 0% 100%)',
+        shift: 32,
+        opacity: 1
+      }
+    ],
+    []
   );
 
   useEffect(() => {
@@ -64,33 +70,15 @@ export default function HeroDepth({ fadeStart = 0.7, strength = 0.06 }: HeroDept
   }, []);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const img = new Image();
-    img.src = '/hero/montanas-depth.png';
-    const handleLoad = () => setDepthStatus('available');
-    const handleError = () => setDepthStatus('missing');
-    img.addEventListener('load', handleLoad, { once: true });
-    img.addEventListener('error', handleError, { once: true });
-    return () => {
-      img.removeEventListener('load', handleLoad);
-      img.removeEventListener('error', handleError);
-    };
-  }, []);
-
-  useEffect(() => {
     if (reduceMotion) {
       setMode('static');
       return;
     }
-    if (depthStatus === 'available') {
-      setMode('three');
-    } else if (depthStatus === 'missing') {
-      setMode('fallback');
-    }
-  }, [reduceMotion, depthStatus]);
+    setMode('parallax');
+  }, [reduceMotion]);
 
   useEffect(() => {
-    if (mode !== 'fallback') return;
+    if (mode !== 'parallax') return;
 
     const state = {
       target: { x: 0, y: 0 },
@@ -98,14 +86,20 @@ export default function HeroDepth({ fadeStart = 0.7, strength = 0.06 }: HeroDept
       raf: null as number | null
     };
 
+    const applyTransforms = () => {
+      layerRefs.current.forEach((layer, index) => {
+        const config = layers[index];
+        if (!layer || !config) return;
+        const amount = config.shift * strength;
+        layer.style.transform = `translate3d(${state.current.x * amount}px, ${state.current.y * amount}px, 0)`;
+      });
+    };
+
     const step = () => {
       state.raf = null;
-      state.current.x += (state.target.x - state.current.x) * 0.075;
-      state.current.y += (state.target.y - state.current.y) * 0.075;
-      if (fallbackRef.current) {
-        const maxShift = 30;
-        fallbackRef.current.style.transform = `translate3d(${state.current.x * maxShift}px, ${state.current.y * maxShift}px, 0)`;
-      }
+      state.current.x += (state.target.x - state.current.x) * 0.08;
+      state.current.y += (state.target.y - state.current.y) * 0.08;
+      applyTransforms();
       if (Math.abs(state.current.x - state.target.x) > 0.001 || Math.abs(state.current.y - state.target.y) > 0.001) {
         state.raf = requestAnimationFrame(step);
       }
@@ -113,172 +107,41 @@ export default function HeroDepth({ fadeStart = 0.7, strength = 0.06 }: HeroDept
 
     inputControllerRef.current = {
       setTarget: (x, y) => {
-        state.target.x = THREE.MathUtils.clamp(x, -1, 1);
-        state.target.y = THREE.MathUtils.clamp(y, -1, 1);
+        state.target.x = clamp(x, -1, 1);
+        state.target.y = clamp(y, -1, 1);
         if (state.raf == null) {
           state.raf = requestAnimationFrame(step);
         }
       }
     };
+
+    applyTransforms();
 
     return () => {
       if (state.raf != null) {
         cancelAnimationFrame(state.raf);
       }
-      if (fallbackRef.current) {
-        fallbackRef.current.style.transform = 'translate3d(0, 0, 0)';
-      }
-      inputControllerRef.current = null;
-    };
-  }, [mode]);
-
-  useEffect(() => {
-    if (mode !== 'three') return;
-    const container = containerRef.current;
-    if (!container) return;
-
-    let disposed = false;
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.setSize(container.clientWidth, container.clientHeight, false);
-    renderer.domElement.style.width = '100%';
-    renderer.domElement.style.height = '100%';
-    renderer.domElement.style.display = 'block';
-    renderer.domElement.setAttribute('aria-hidden', 'true');
-    container.appendChild(renderer.domElement);
-
-    const scene = new THREE.Scene();
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-    const geometry = new THREE.PlaneGeometry(2, 2);
-
-    const loader = new THREE.TextureLoader();
-
-    const state = {
-      target: new THREE.Vector2(),
-      current: new THREE.Vector2(),
-      raf: null as number | null,
-      frame: null as number | null,
-      uniforms: null as THREE.ShaderMaterial['uniforms'] | null,
-      material: null as THREE.ShaderMaterial | null,
-      mesh: null as THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial> | null,
-      colorTex: null as THREE.Texture | null,
-      depthTex: null as THREE.Texture | null
-    };
-
-    const scheduleRender = () => {
-      if (state.frame != null) return;
-      state.frame = requestAnimationFrame(() => {
-        state.frame = null;
-        if (!state.uniforms) return;
-        const width = renderer.domElement.width;
-        const height = renderer.domElement.height;
-        (state.uniforms.u_res.value as THREE.Vector2).set(width, height);
-        renderer.render(scene, camera);
-      });
-    };
-
-    const step = () => {
-      state.raf = null;
-      state.current.lerp(state.target, 0.08);
-      if (state.uniforms) {
-        (state.uniforms.u_mouse.value as THREE.Vector2).copy(state.current);
-      }
-      scheduleRender();
-      if (state.current.distanceTo(state.target) > 0.001) {
-        state.raf = requestAnimationFrame(step);
-      }
-    };
-
-    inputControllerRef.current = {
-      setTarget: (x, y) => {
-        state.target.set(THREE.MathUtils.clamp(x, -1, 1), THREE.MathUtils.clamp(y, -1, 1));
-        if (state.raf == null) {
-          state.raf = requestAnimationFrame(step);
-        }
-      }
-    };
-
-    Promise.all([
-      loader.loadAsync('/hero/montanas.jpg'),
-      loader.loadAsync('/hero/montanas-depth.png')
-    ])
-      .then(([colorTex, depthTex]) => {
-        if (disposed) {
-          colorTex.dispose();
-          depthTex.dispose();
-          return;
-        }
-        colorTex.colorSpace = THREE.SRGBColorSpace;
-        colorTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-        colorTex.wrapS = THREE.ClampToEdgeWrapping;
-        colorTex.wrapT = THREE.ClampToEdgeWrapping;
-        depthTex.wrapS = THREE.ClampToEdgeWrapping;
-        depthTex.wrapT = THREE.ClampToEdgeWrapping;
-
-        const uniforms = {
-          u_tex: { value: colorTex },
-          u_depth: { value: depthTex },
-          u_mouse: { value: new THREE.Vector2() },
-          u_strength: { value: strength },
-          u_res: { value: new THREE.Vector2(renderer.domElement.width, renderer.domElement.height) }
-        } satisfies THREE.ShaderMaterialParameters['uniforms'];
-
-        const material = new THREE.ShaderMaterial({
-          uniforms,
-          vertexShader: shaders.vertex,
-          fragmentShader: shaders.fragment
-        });
-
-        const mesh = new THREE.Mesh(geometry, material);
-        scene.add(mesh);
-
-        state.uniforms = uniforms;
-        state.material = material;
-        state.mesh = mesh;
-        state.colorTex = colorTex;
-        state.depthTex = depthTex;
-        if (state.raf == null) {
-          state.raf = requestAnimationFrame(step);
-        }
-        scheduleRender();
-      })
-      .catch(() => {
-        if (!disposed) {
-          setMode('fallback');
+      layerRefs.current.forEach((layer) => {
+        if (layer) {
+          layer.style.transform = 'translate3d(0, 0, 0)';
         }
       });
-
-    const handleResize = () => {
-      renderer.setSize(container.clientWidth, container.clientHeight, false);
-      scheduleRender();
-    };
-
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      disposed = true;
-      window.removeEventListener('resize', handleResize);
-      if (state.raf != null) cancelAnimationFrame(state.raf);
-      if (state.frame != null) cancelAnimationFrame(state.frame);
-      if (state.mesh) scene.remove(state.mesh);
-      if (state.material) state.material.dispose();
-      if (state.colorTex) state.colorTex.dispose();
-      if (state.depthTex) state.depthTex.dispose();
-      geometry.dispose();
-      renderer.dispose();
-      renderer.domElement.remove();
       inputControllerRef.current = null;
     };
-  }, [mode, strength]);
+  }, [layers, mode, strength]);
 
   useEffect(() => {
     if (mode === 'static') return;
 
     const handlePointerMove = (event: PointerEvent) => {
       const controller = inputControllerRef.current;
-      if (!controller) return;
-      const nx = (event.clientX / window.innerWidth) * 2 - 1;
-      const ny = -((event.clientY / window.innerHeight) * 2 - 1);
+      const container = containerRef.current;
+      if (!controller || !container) return;
+      const rect = container.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+      const clamp01 = (value: number) => clamp(value, 0, 1);
+      const nx = clamp01((event.clientX - rect.left) / rect.width) * 2 - 1;
+      const ny = -(clamp01((event.clientY - rect.top) / rect.height) * 2 - 1);
       controller.setTarget(nx, ny);
     };
 
@@ -302,8 +165,8 @@ export default function HeroDepth({ fadeStart = 0.7, strength = 0.06 }: HeroDept
       if (orientationHandler) return;
       orientationHandler = (event: DeviceOrientationEvent) => {
         if (event.beta == null || event.gamma == null) return;
-        const gamma = THREE.MathUtils.clamp(event.gamma / 20, -1, 1);
-        const beta = THREE.MathUtils.clamp(event.beta / 20, -1, 1);
+        const gamma = clamp(event.gamma / 20, -1, 1);
+        const beta = clamp(event.beta / 20, -1, 1);
         inputControllerRef.current?.setTarget(gamma, -beta * 0.8);
       };
       window.addEventListener('deviceorientation', orientationHandler);
@@ -376,37 +239,50 @@ export default function HeroDepth({ fadeStart = 0.7, strength = 0.06 }: HeroDept
           }}
         />
       ) : null}
-      {mode === 'fallback' ? (
+      {mode === 'parallax' ? (
         <div
-          ref={fallbackRef}
           aria-hidden
           style={{
-            width: '100%',
-            height: '100%',
-            backgroundImage: 'url(/hero/montanas.jpg)',
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
-            transform: 'translate3d(0, 0, 0)',
-            willChange: 'transform'
+            position: 'absolute',
+            inset: 0,
+            overflow: 'hidden'
           }}
-        />
+        >
+          <img
+            src="/hero/montanas.jpg"
+            alt=""
+            aria-hidden
+            style={{
+              position: 'absolute',
+              inset: 0,
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover'
+            }}
+          />
+          {layers.map((layer, index) => (
+            <div
+              key={layer.id}
+              ref={(el) => {
+                layerRefs.current[index] = el;
+              }}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                backgroundImage: 'url(/hero/montanas.jpg)',
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                clipPath: layer.clipPath,
+                WebkitClipPath: layer.clipPath,
+                opacity: layer.opacity,
+                mixBlendMode: 'screen',
+                willChange: 'transform',
+                transform: 'translate3d(0, 0, 0)'
+              }}
+            />
+          ))}
+        </div>
       ) : null}
-      <span
-        style={{
-          position: 'absolute',
-          width: 1,
-          height: 1,
-          padding: 0,
-          margin: -1,
-          border: 0,
-          clip: 'rect(0 0 0 0)',
-          clipPath: 'inset(50%)',
-          overflow: 'hidden',
-          whiteSpace: 'nowrap'
-        }}
-      >
-        {description}
-      </span>
     </section>
   );
 }
