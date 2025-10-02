@@ -3,62 +3,31 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 type HeroDepthProps = {
+  id?: string;
   fadeStart?: number;
   strength?: number;
 };
 
 const clampFade = (value: number) => Math.min(Math.max(value, 0.65), 0.85);
-type LayerConfig = {
-  id: string;
-  clipPath: string;
-  shift: number;
-  opacity: number;
-};
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
-export default function HeroDepth({ fadeStart = 0.7, strength = 0.06 }: HeroDepthProps) {
+export default function HeroDepth({ id, fadeStart = 0.7, strength = 0.06 }: HeroDepthProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const layerRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const imageRef = useRef<HTMLDivElement | null>(null);
   const inputControllerRef = useRef<{ setTarget: (x: number, y: number) => void } | null>(null);
   const [reduceMotion, setReduceMotion] = useState(false);
   const [mode, setMode] = useState<'static' | 'parallax'>('static');
 
   const fadeValue = useMemo(() => clampFade(fadeStart), [fadeStart]);
-  const maskStyle = useMemo(
-    () => ({
-      maskImage: `linear-gradient(to bottom, rgba(0,0,0,1) ${fadeValue * 100}%, rgba(0,0,0,0) 100%)`,
-      WebkitMaskImage: `linear-gradient(to bottom, rgba(0,0,0,1) ${fadeValue * 100}%, rgba(0,0,0,0) 100%)`
-    }),
-    [fadeValue]
-  );
-
-  const layers = useMemo<LayerConfig[]>(
-    () => [
-      {
-        id: 'ridge-far',
-        clipPath:
-          'polygon(0% 36%, 10% 32%, 22% 40%, 34% 30%, 47% 42%, 59% 31%, 73% 44%, 86% 33%, 100% 39%, 100% 100%, 0% 100%)',
-        shift: 12,
-        opacity: 0.95
-      },
-      {
-        id: 'ridge-mid',
-        clipPath:
-          'polygon(0% 46%, 9% 52%, 18% 44%, 31% 58%, 44% 46%, 58% 60%, 72% 50%, 86% 64%, 100% 54%, 100% 100%, 0% 100%)',
-        shift: 22,
-        opacity: 0.98
-      },
-      {
-        id: 'ridge-near',
-        clipPath:
-          'polygon(0% 58%, 8% 66%, 20% 58%, 33% 74%, 48% 60%, 62% 76%, 78% 64%, 90% 80%, 100% 70%, 100% 100%, 0% 100%)',
-        shift: 32,
-        opacity: 1
-      }
-    ],
-    []
-  );
+  const overlayStyle = useMemo(() => {
+    const softStart = Math.max(fadeValue - 0.2, 0);
+    return {
+      background: `linear-gradient(to bottom, rgba(0,0,0,0) ${softStart * 100}%, rgba(0,0,0,0.55) ${
+        fadeValue * 100
+      }%, rgba(0,0,0,0.95) 100%)`
+    };
+  }, [fadeValue]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -87,12 +56,15 @@ export default function HeroDepth({ fadeStart = 0.7, strength = 0.06 }: HeroDept
     };
 
     const applyTransforms = () => {
-      layerRefs.current.forEach((layer, index) => {
-        const config = layers[index];
-        if (!layer || !config) return;
-        const amount = config.shift * strength;
-        layer.style.transform = `translate3d(${state.current.x * amount}px, ${state.current.y * amount}px, 0)`;
-      });
+      const wrapper = imageRef.current;
+      if (!wrapper) return;
+      const translateIntensity = 18 * strength * 16;
+      const rotateIntensity = 8 * strength * 16;
+      const translateX = state.current.x * translateIntensity;
+      const translateY = state.current.y * translateIntensity * 0.6;
+      const rotateY = state.current.x * -rotateIntensity;
+      const rotateX = state.current.y * rotateIntensity;
+      wrapper.style.transform = `translate3d(${translateX}px, ${translateY}px, 0) rotateX(${rotateX}deg) rotateY(${rotateY}deg)`;
     };
 
     const step = () => {
@@ -121,14 +93,13 @@ export default function HeroDepth({ fadeStart = 0.7, strength = 0.06 }: HeroDept
       if (state.raf != null) {
         cancelAnimationFrame(state.raf);
       }
-      layerRefs.current.forEach((layer) => {
-        if (layer) {
-          layer.style.transform = 'translate3d(0, 0, 0)';
-        }
-      });
+      const wrapper = imageRef.current;
+      if (wrapper) {
+        wrapper.style.transform = 'translate3d(0, 0, 0) rotateX(0deg) rotateY(0deg)';
+      }
       inputControllerRef.current = null;
     };
-  }, [layers, mode, strength]);
+  }, [mode, strength]);
 
   useEffect(() => {
     if (mode === 'static') return;
@@ -216,6 +187,7 @@ export default function HeroDepth({ fadeStart = 0.7, strength = 0.06 }: HeroDept
 
   return (
     <section
+      id={id}
       aria-label={description}
       style={{
         position: 'relative',
@@ -223,11 +195,21 @@ export default function HeroDepth({ fadeStart = 0.7, strength = 0.06 }: HeroDept
         height: '100vh',
         overflow: 'hidden',
         backgroundColor: '#000',
-        ...maskStyle
+        perspective: mode === 'parallax' ? '1200px' : undefined
       }}
       ref={containerRef}
     >
-      {mode === 'static' ? (
+      <div
+        ref={imageRef}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          transformStyle: 'preserve-3d',
+          transition: mode === 'static' ? 'transform 0.4s ease' : 'transform 0.12s linear',
+          willChange: mode === 'parallax' ? 'transform' : undefined,
+          transform: 'translate3d(0, 0, 0)'
+        }}
+      >
         <img
           src="/hero/montanas.jpg"
           alt={description}
@@ -235,54 +217,21 @@ export default function HeroDepth({ fadeStart = 0.7, strength = 0.06 }: HeroDept
             width: '100%',
             height: '100%',
             objectFit: 'cover',
-            display: 'block'
+            transform: mode === 'parallax' ? 'scale3d(1.08, 1.08, 1)' : 'scale3d(1.02, 1.02, 1)',
+            transformOrigin: 'center',
+            filter: 'saturate(1.05) contrast(1.05)'
           }}
         />
-      ) : null}
-      {mode === 'parallax' ? (
         <div
           aria-hidden
           style={{
             position: 'absolute',
             inset: 0,
-            overflow: 'hidden'
+            pointerEvents: 'none',
+            ...overlayStyle
           }}
-        >
-          <img
-            src="/hero/montanas.jpg"
-            alt=""
-            aria-hidden
-            style={{
-              position: 'absolute',
-              inset: 0,
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover'
-            }}
-          />
-          {layers.map((layer, index) => (
-            <div
-              key={layer.id}
-              ref={(el) => {
-                layerRefs.current[index] = el;
-              }}
-              style={{
-                position: 'absolute',
-                inset: 0,
-                backgroundImage: 'url(/hero/montanas.jpg)',
-                backgroundSize: 'cover',
-                backgroundPosition: 'center',
-                clipPath: layer.clipPath,
-                WebkitClipPath: layer.clipPath,
-                opacity: layer.opacity,
-                mixBlendMode: 'screen',
-                willChange: 'transform',
-                transform: 'translate3d(0, 0, 0)'
-              }}
-            />
-          ))}
-        </div>
-      ) : null}
+        />
+      </div>
     </section>
   );
 }
